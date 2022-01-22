@@ -112,10 +112,6 @@ AddEventHandler('PFProperty:message', function(target, msg)
     exports['chat']:addMessage(target, msg) --[[ Replace this with your notifcation resource :) ]]
 end)
 
-function message(target, msg)
-    exports['chat']:addMessage(target, msg) --[[ Replace this with your notifcation resource :) ]]
-end
-
 RegisterNetEvent('PFProperty:AddToDataBase')
 AddEventHandler('PFProperty:AddToDataBase', function(args)
     local markerPos = ("%s,%s,%s"):format(decimal(args.markerPos.x), decimal(args.markerPos.y), decimal(args.markerPos.z))
