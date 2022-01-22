@@ -1,13 +1,15 @@
 local owned = {}
 local temp = {}
+local businessUnpacked = {}
 
 RegisterCommand('buy', function(source, args, RawCommand)
     local id = ExtractIdentifiers(source)
-    for k,v in pairs(Config.Business) do
-        if #(v['sign'].loc - GetEntityCoords(GetPlayerPed(source))) <= v.range then
+    for k,v in pairs(businessUnpacked) do
+        signPos = split(v.sign.loc, ",")
+        if #(vec3(tonumber(signPos[1]), tonumber(signPos[2]), tonumber(signPos[3])) - GetEntityCoords(GetPlayerPed(source))) <= v.range then
             if checkOwned(k) then
                 if owned[id] then
-                    return message(source, 'You can only have one property at a time.')
+                    return TriggerEvent('PFProperty:message', source, 'You can only have one property at a time.')
                 end
                 return buyProperty(source, args, RawCommand, k, id)
             end
@@ -18,18 +20,18 @@ RegisterCommand('buy', function(source, args, RawCommand)
         if #(v.loc - GetEntityCoords(GetPlayerPed(source))) <= v.range then
             if args[1] then
                 local k = table.concat(args, ""):lower()
-                if Config.Business[k] then
+                if businessUnpacked[k] then
                     if checkOwned(k) then
                         if owned[id] then
-                            return message(source, 'You can only have one property at a time.')
+                            return TriggerEvent('PFProperty:message', source, 'You can only have one property at a time.')
                         end
                         return buyProperty(source, args, RawCommand, k, id)
                     end
                 else
-                    return message(source, ('It doesn\t look like^1 %s ^0is a property you can buy. ^1Please check your spelling.^0'):format(table.concat(args, "")))
+                    return TriggerEvent('PFProperty:message', source, ('It doesn\t look like^1 %s ^0is a property you can buy. ^1Please check your spelling.^0'):format(table.concat(args, "")))
                 end
             else
-                return message(source, 'Please use: /buy [Property Name].')
+                return TriggerEvent('PFProperty:message', source, 'Please use: /buy [Property Name].')
             end
         end
     end
@@ -38,27 +40,42 @@ end)
 RegisterCommand('sell', function(source, args, RawCommand)
     local id = ExtractIdentifiers(source)
     if not owned[id] then
-        return message(source, 'You don\'t own any properties you can sell.')
+        return TriggerEvent('PFProperty:message', source, 'You don\'t own any properties you can sell.')
     end
     if args[1] ~= 'confirm' then
-        return message(source, ('Please use ^1/sell confirm^0 if you want to sell the %s'):format(Config.Business[owned[id].Name].name))
+        return TriggerEvent('PFProperty:message', source, ('Please use ^1/sell confirm^0 if you want to sell the %s'):format(businessUnpacked[owned[id].Name].displayName))
     end
-    message(-1, ('%s has sold the %s'):format(GetPlayerName(source), Config.Business[owned[id].Name].name))
+    TriggerEvent('PFProperty:message', -1, ('%s has sold the %s'):format(GetPlayerName(source), businessUnpacked[owned[id].Name].displayName))
+    if Config.Keep then
+        local result = MySQL.query.await('UPDATE prefech_properties SET isOwned = 0 WHERE name = ?', {owned[id].Name})
+    end
     owned[id] = nil
     TriggerClientEvent('PFProperty:Sync', -1, owned)
 end)
 
+RegisterNetEvent('PFProperty:checkPerms')
+AddEventHandler('PFProperty:checkPerms', function()
+    if IsPlayerAceAllowed(source, Config.AcePerm) then
+        return TriggerClientEvent('PFProperty:sendPerms', source, true)
+    end
+    return TriggerClientEvent('PFProperty:sendPerms', source, false)
+end)
+
 AddEventHandler("playerJoining", function(source, oldID)
-	TriggerClientEvent('PFProperty:Sync', source, owned)
+    TriggerClientEvent('PFProperty:businessStore', source, businessUnpacked)
+    Wait(500)
+    TriggerClientEvent('PFProperty:Sync', source, owned)
 end)
 
 function buyProperty(source, args, RawCommand, k, id)
+    if Config.Keep then
+        MySQL.query.await('UPDATE prefech_properties SET isOwned = ? WHERE name = ?', {id, k})
+    end
     owned[id] = {
-        ['Name'] = k,
-        ['Owner'] = GetPlayerName(source)
+        ['Name'] = k
     }
     TriggerClientEvent('PFProperty:Sync', -1, owned)
-    message(-1, ('%s has bought the %s'):format(GetPlayerName(source), Config.Business[k].name))
+    TriggerEvent('PFProperty:message', -1, ('%s has bought the %s'):format(GetPlayerName(source), businessUnpacked[k].displayName))
 end
 
 function ExtractIdentifiers(src)
@@ -90,49 +107,76 @@ function has_val(tab, val)
     return false
 end
 
+RegisterNetEvent('PFProperty:message')
+AddEventHandler('PFProperty:message', function(target, msg)
+    exports['chat']:addMessage(target, msg) --[[ Replace this with your notifcation resource :) ]]
+end)
+
 function message(target, msg)
     exports['chat']:addMessage(target, msg) --[[ Replace this with your notifcation resource :) ]]
 end
 
+RegisterNetEvent('PFProperty:AddToDataBase')
+AddEventHandler('PFProperty:AddToDataBase', function(args)
+    local markerPos = ("%s,%s,%s"):format(decimal(args.markerPos.x), decimal(args.markerPos.y), decimal(args.markerPos.z))
+    local signPos = ("%s,%s,%s"):format(decimal(args.signPos.x), decimal(args.signPos.y), decimal(args.signPos.z))
+    MySQL.query.await('INSERT INTO prefech_properties (id, name, display_name, marker_pos, forsale_blip, sold_blip, sign_pos, sign_heading, inrange, isOwned) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0);', {args.name, args.displayName, markerPos, args.blipSale, args.blipSold, signPos, decimal(args.signHeading), args.range})
+    Wait(500)
+    propertySync()
+end)
 
---[[
-
--- This is what i used to add the properties faster.
--- just use the command /sc [Name] to get the marker location and then walk to where you want the sign and run the command again.
--- Keep going until you have added everything you want and there should be a file in your server-data folder (where your resource folder is) with the saved coords. :)
-
-]]
-
-if Config.DevTools then
-    saves = {}
-    RegisterCommand('sc', function(source, args, RawCommand)
-        if not args[1] then
-        return message(source, '/sc [name]')
+function propertySync()
+    local result = MySQL.query.await('SELECT * FROM prefech_properties', {})
+    businessUnpacked = {}
+    for k,v in pairs(result) do
+        businessUnpacked[v.name] = {
+            displayName = v.display_name,
+            blip = {
+                loc = v.marker_pos,
+                forsale = v.forsale_blip,
+                sold = v.sold_blip
+            },
+            sign = {
+                loc = v.sign_pos,
+                heading = v.sign_heading
+            },
+            range = v.inrange
+        }
+        if v.isOwned ~= '0' then
+            owned[v.isOwned] = {
+                ['Name'] = v.name
+            }
         end
-        if saves['marker'] ~= nil then
-            local name = table.concat(args, " ")
-            local bname = table.concat(args, ""):lower()
-            local ploc = GetEntityCoords(GetPlayerPed(source))
-            local heading = GetEntityHeading(GetPlayerPed(source))
-            local string = ("['%s'] = { name = '%s', marker = { loc = vec3(%s, %s, %s), blip =  { forsale = 375, sold = 374 } }, sign = { loc = vec3(%s, %s, %s - 1.0), headding = %s }, range = 2 },\n"):format(bname, name, decimal(saves['marker'].x), decimal(saves['marker'].y), decimal(saves['marker'].z), decimal(ploc.x), decimal(ploc.y), decimal(ploc.z), decimal(heading))
-            addToFile(string, 'savedcoords.lua')
-            saves['marker'] = nil
-            message(source, 'Saved in file.')
-        else
-            saves['marker'] = GetEntityCoords(GetPlayerPed(source))
-            message(source, 'Map marker saved. Run the command again to finish.')
-        end
-    end)
-
-    function addToFile(srting, file)
-        file = io.open(file, 'a')
-        io.output(file)
-        local data = srting
-        io.write(data)
-        io.close(file)
     end
+    TriggerClientEvent('PFProperty:businessStore', -1, businessUnpacked)
+    Wait(500)
+    TriggerClientEvent('PFProperty:Sync', -1, owned)
+end
 
-    function decimal(i)
-        return math.floor(i * 100) / 100
+AddEventHandler('onResourceStart', function(resourceName)
+    if (GetCurrentResourceName() == resourceName) then
+        TriggerClientEvent('PFProperty:businessStore', -1, businessUnpacked)
+        Wait(500)
+        TriggerClientEvent('PFProperty:Sync', -1, owned)
     end
+end)
+
+CreateThread(function()
+    Wait(500)
+    propertySync()
+end)
+
+function decimal(i)
+    return math.floor(i * 100) / 100
+end
+
+function split(inputstr, sep)
+    if sep == nil then
+            sep = "%s"
+    end
+    local t={}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+            table.insert(t, str)
+    end
+    return t
 end
