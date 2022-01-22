@@ -32,7 +32,6 @@
 > ### Screenshots:
 > ![Sandy 24/7 For Sale](https://prefech.com/i/5af880b0-3e53-4bef-9d54-5ce35ddbc086)
 > ![Sandy 24/7 Sold](https://prefech.com/i/770c7ff4-f43e-4f30-b0e7-942a126e2078)
-> ![createProperty](https://prefech.com/i/16ef75b1-00a0-4dcb-b0f5-b60a16460d61.gif)
 > ![resmon](https://prefech.com/i/6d7a90fe-82ae-4db1-aca2-20b1e2a393e7.png)
 
 > ### Support:
